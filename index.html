@@ -658,19 +658,46 @@ async function openScanner(targetId){
   }
 }
 
-function scanFrame(){
+function scanFrame(ts){
   const video=document.getElementById('scanVideo');
   const canvas=document.getElementById('scanCanvas');
+
   if(video.readyState!==video.HAVE_ENOUGH_DATA){
-    scanRAF=requestAnimationFrame(scanFrame);return;
+    scanRAF=requestAnimationFrame(scanFrame);
+    return;
   }
-  canvas.width=video.videoWidth; canvas.height=video.videoHeight;
+
+  if(!scanFrame.last) scanFrame.last = 0;
+  if(ts - scanFrame.last < 120){
+    scanRAF=requestAnimationFrame(scanFrame);
+    return;
+  }
+  scanFrame.last = ts;
+
   const ctx=canvas.getContext('2d');
-  ctx.drawImage(video,0,0);
+
+  const targetWidth = 640;
+  const scale = targetWidth / video.videoWidth;
+
+  canvas.width = targetWidth;
+  canvas.height = video.videoHeight * scale;
+
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+
   const imageData=ctx.getImageData(0,0,canvas.width,canvas.height);
-  const code=jsQR(imageData.data,imageData.width,imageData.height,{inversionAttempts:'dontInvert'});
-  if(code&&code.data){handleScanResult(code.data);}
-  else{scanRAF=requestAnimationFrame(scanFrame);}
+
+  const code=jsQR(
+    imageData.data,
+    imageData.width,
+    imageData.height,
+    { inversionAttempts:'attemptBoth' }
+  );
+
+  if(code && code.data){
+    handleScanResult(code.data);
+  }else{
+    scanRAF=requestAnimationFrame(scanFrame);
+  }
 }
 
 async function handleScanResult(data){
