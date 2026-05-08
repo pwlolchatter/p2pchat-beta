@@ -1,0 +1,1637 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="no-referrer">
+<title>P2P Chat — Encrypted</title>
+<!--
+  CSP: 自身のインライン script/style と CDN(qrcodejs/jsQR)・Googleフォントのみ許可。
+       外部接続は STUN(WebRTC) と CDN/フォントだけ。データを送る connect-src は無し。
+-->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com;
+  style-src  'self' 'unsafe-inline' https://fonts.googleapis.com;
+  font-src   https://fonts.gstatic.com data:;
+  img-src    'self' data: blob:;
+  media-src  'self' blob:;
+  connect-src 'self';
+  frame-ancestors 'none';
+  base-uri 'none';
+  form-action 'none';
+">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"
+        integrity="sha512-CNgIRecGo7nphbeZ04Sc13ka07paqdeTu0WR1IM4kNcpmBAUSHSQX0FslNhTDadL4O5SAGapGt4FodqL8My0mA=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"
+        integrity="sha512-0qK9TaP4ZDdq/wj6/iy3W5SP6mNeFyW+yA1XnBhxcwwJX9/n8B5KKt3Hv3oWQHr5GKjztkXjRvY6/B5+aJ7QPg=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap');
+:root{
+  --bg:#0a0a0f;--surface:#111118;--surface2:#1a1a26;--border:#2a2a40;
+  --accent:#7c6aff;--green:#3dffb0;--orange:#ff9f3d;--cyan:#3dc8ff;
+  --text:#e8e8f0;--muted:#666680;--red:#ff5a5a;--yellow:#ffd93d;
+  --mono:'Space Mono',monospace;--sans:'Syne',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--mono);height:100dvh;display:flex;flex-direction:column;overflow:hidden}
+body::before{content:'';position:fixed;inset:0;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");pointer-events:none;z-index:9999;opacity:.4}
+
+/* header */
+header{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0;gap:8px}
+.logo{font-family:var(--sans);font-weight:800;font-size:17px;display:flex;align-items:center;gap:8px;white-space:nowrap}
+.logo-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.hdr-right{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.enc-badge{font-size:10px;color:var(--muted);display:flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:transparent;white-space:nowrap;transition:all .25s;cursor:default}
+.enc-badge.active{color:var(--green);border-color:#3dffb033;background:#3dffb00a}
+.enc-badge.verified{color:var(--accent);border-color:#7c6aff55;background:#7c6aff14;cursor:pointer}
+.status-pill{display:flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;border:1px solid var(--border);font-size:10px;color:var(--muted);transition:all .3s;white-space:nowrap}
+.status-pill.connected{border-color:var(--green);color:var(--green)}
+.status-dot{width:6px;height:6px;border-radius:50%;background:var(--muted);transition:all .3s;flex-shrink:0}
+.status-pill.connected .status-dot{background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 1.5s infinite}
+
+/* layout */
+.app{display:flex;flex:1;overflow:hidden}
+
+/* sidebar */
+.sidebar{width:330px;border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;overflow:hidden;transition:width .3s;flex-shrink:0}
+.sidebar.hidden{width:0;border:none}
+.sidebar-inner{padding:14px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;flex:1;min-width:330px}
+.section-label{font-size:10px;font-weight:700;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin-bottom:5px}
+
+/* buttons */
+.btn{padding:7px 11px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:var(--mono);font-size:11px;cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:4px;white-space:nowrap}
+.btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.btn:active{transform:scale(.97)}
+.btn:disabled{opacity:.4;cursor:not-allowed;pointer-events:none}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
+.btn-primary:hover:not(:disabled){background:#9381ff;border-color:#9381ff;color:#fff}
+.btn-green{border-color:var(--green);color:var(--green)}
+.btn-green:hover:not(:disabled){background:var(--green);color:#000}
+.btn-orange{border-color:var(--orange);color:var(--orange)}
+.btn-orange:hover:not(:disabled){background:var(--orange);color:#000}
+.btn-cyan{border-color:var(--cyan);color:var(--cyan)}
+.btn-cyan:hover:not(:disabled){background:var(--cyan);color:#000}
+.btn-red{border-color:var(--red);color:var(--red)}
+.btn-red:hover:not(:disabled){background:var(--red);color:#fff}
+.btn-row{display:flex;gap:5px;margin-top:7px}
+.btn-row .btn{flex:1}
+
+/* step cards */
+.step{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:11px}
+.step-title{font-family:var(--sans);font-weight:700;font-size:12px;margin-bottom:9px;display:flex;align-items:center;gap:7px}
+.step-num{width:19px;height:19px;border-radius:50%;background:var(--accent);color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0}
+textarea.sdp{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:9.5px;padding:9px;resize:vertical;min-height:75px;outline:none;transition:border .2s;line-height:1.5}
+textarea.sdp:focus{border-color:var(--accent)}
+textarea.sdp.invalid{border-color:var(--red)}
+textarea.sdp.valid{border-color:var(--green)}
+
+/* chat */
+.chat-area{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.messages{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:9px;scroll-behavior:smooth}
+.messages::-webkit-scrollbar{width:3px}
+.messages::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.msg{max-width:75%;display:flex;flex-direction:column;gap:3px;animation:fadeUp .18s ease;position:relative}
+@keyframes fadeUp{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+.msg.me{align-self:flex-end;align-items:flex-end}
+.msg.them{align-self:flex-start;align-items:flex-start}
+.msg-bubble{padding:9px 13px;border-radius:14px;font-size:13px;line-height:1.6;word-break:break-word;white-space:pre-wrap;cursor:text;user-select:text}
+.msg.me .msg-bubble{background:var(--accent);color:#fff;border-bottom-right-radius:3px}
+.msg.them .msg-bubble{background:var(--surface2);border:1px solid var(--border);border-bottom-left-radius:3px}
+.msg-meta{font-size:10px;color:var(--muted);display:flex;gap:6px;align-items:center}
+.msg-meta .copy-btn{cursor:pointer;color:var(--muted);background:none;border:none;font-size:10px;padding:0;font-family:inherit}
+.msg-meta .copy-btn:hover{color:var(--accent)}
+.msg-img{max-width:260px;max-height:200px;border-radius:10px;cursor:pointer;transition:opacity .2s;display:block}
+.msg-img:hover{opacity:.82}
+.msg-file{display:flex;align-items:center;gap:9px;padding:9px 13px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;font-size:12px;min-width:200px}
+.msg-file .fi{font-size:20px;flex-shrink:0}
+.msg-file a{color:var(--accent);text-decoration:none;word-break:break-all}
+.msg-file a:hover{text-decoration:underline}
+.msg-file .fmeta{font-size:10px;color:var(--muted);margin-top:2px}
+.msg-progress{height:3px;background:var(--border);border-radius:2px;margin-top:6px;overflow:hidden}
+.msg-progress-fill{height:100%;background:var(--accent);transition:width .15s;width:0%}
+.msg-system{align-self:center;font-size:10px;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px 11px;animation:fadeUp .18s ease;text-align:center;max-width:90%}
+.msg-system.warn{color:var(--orange);border-color:var(--orange)}
+.msg-system.err{color:var(--red);border-color:var(--red)}
+.scroll-jump{position:absolute;right:18px;bottom:74px;background:var(--accent);color:#fff;border:none;border-radius:50%;width:36px;height:36px;cursor:pointer;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,.4);display:none;z-index:50}
+.scroll-jump.show{display:flex;align-items:center;justify-content:center}
+
+/* input bar */
+.input-bar{border-top:1px solid var(--border);padding:10px 14px;display:flex;align-items:center;gap:7px;background:var(--surface);flex-shrink:0}
+.icon-btn{background:none;border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer;padding:6px 9px;font-size:15px;transition:all .15s;line-height:1;flex-shrink:0}
+.icon-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.icon-btn:disabled{opacity:.35;cursor:not-allowed}
+.msg-input{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:13px;padding:8px 13px;outline:none;transition:border .2s;resize:none;height:38px;max-height:110px;overflow-y:auto;min-width:0}
+.msg-input:focus{border-color:var(--accent)}
+.msg-input::placeholder{color:var(--muted)}
+.send-btn{background:var(--accent);border:none;border-radius:8px;color:#fff;cursor:pointer;padding:8px 14px;font-size:15px;transition:all .15s;flex-shrink:0}
+.send-btn:hover:not(:disabled){background:#9381ff}
+.send-btn:active{transform:scale(.94)}
+.send-btn:disabled{opacity:.35;cursor:not-allowed}
+
+/* lightbox */
+.lightbox{display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:8000;align-items:center;justify-content:center;cursor:zoom-out;backdrop-filter:blur(8px)}
+.lightbox.open{display:flex}
+.lightbox img{max-width:92vw;max-height:92vh;border-radius:8px}
+
+/* modal overlay */
+.modal-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.82);backdrop-filter:blur(12px);z-index:5000;align-items:center;justify-content:center;padding:16px}
+.modal-ov.open{display:flex}
+.modal-box{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:14px;width:100%;max-width:380px;animation:mIn .2s ease;position:relative;max-height:95dvh;overflow-y:auto}
+@keyframes mIn{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:none}}
+.modal-hdr{display:flex;align-items:center;justify-content:space-between}
+.modal-title{font-family:var(--sans);font-weight:800;font-size:14px}
+.modal-close{background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);cursor:pointer;padding:3px 8px;font-size:11px;transition:all .15s;font-family:var(--mono)}
+.modal-close:hover{border-color:var(--red);color:var(--red)}
+.modal-hint{font-size:10px;color:var(--muted);text-align:center;line-height:1.7}
+
+/* QR container */
+#qrWrap{display:flex;justify-content:center;align-items:center;background:#fff;border-radius:10px;padding:14px;min-height:230px}
+#qrWrap canvas,#qrWrap img{border-radius:3px;display:block}
+
+/* QR carousel nav */
+.qr-nav{display:flex;align-items:center;justify-content:center;gap:10px}
+.qr-nav .btn{width:34px;height:34px;padding:0;font-size:14px;flex-shrink:0}
+.qr-page-info{font-size:13px;font-weight:700;color:var(--text);min-width:54px;text-align:center}
+.qr-dots{display:flex;gap:5px;justify-content:center;flex-wrap:wrap;max-width:100%}
+.qr-dot{width:7px;height:7px;border-radius:50%;background:var(--border);transition:all .2s;cursor:pointer;flex-shrink:0}
+.qr-dot.active{background:var(--accent);box-shadow:0 0 5px var(--accent)}
+.qr-dot.done{background:var(--green)}
+.qr-meta{font-size:10px;color:var(--muted);text-align:center;background:var(--surface2);border:1px solid var(--border);border-radius:5px;padding:5px 8px;line-height:1.6}
+.qr-auto{display:flex;align-items:center;justify-content:center;gap:8px;font-size:11px;color:var(--muted)}
+.qr-auto label{cursor:pointer;display:flex;align-items:center;gap:5px}
+
+/* scanner */
+.scanner-wrap{position:relative;border-radius:10px;overflow:hidden;background:#000;aspect-ratio:1;max-height:280px}
+#scanVideo{width:100%;height:100%;object-fit:cover;display:block}
+#scanCanvas{display:none}
+.sc-corner{position:absolute;width:26px;height:26px;border-color:var(--accent);border-style:solid;border-width:0;pointer-events:none}
+.sc-corner.tl{top:9px;left:9px;border-top-width:3px;border-left-width:3px;border-top-left-radius:4px}
+.sc-corner.tr{top:9px;right:9px;border-top-width:3px;border-right-width:3px;border-top-right-radius:4px}
+.sc-corner.bl{bottom:9px;left:9px;border-bottom-width:3px;border-left-width:3px;border-bottom-left-radius:4px}
+.sc-corner.br{bottom:9px;right:9px;border-bottom-width:3px;border-right-width:3px;border-bottom-right-radius:4px}
+.scan-line{position:absolute;left:9px;right:9px;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);box-shadow:0 0 8px var(--accent);animation:sLine 2s ease-in-out infinite;pointer-events:none}
+@keyframes sLine{0%{top:9px}50%{top:calc(100% - 11px)}100%{top:9px}}
+.scan-overlay{position:absolute;inset:0;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:50px;animation:mIn .3s ease;pointer-events:none}
+.scan-status-row{font-size:11px;color:var(--muted);text-align:center;display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap}
+.blink-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 1s infinite;flex-shrink:0}
+
+/* scan progress chips */
+.scan-chips{display:flex;gap:5px;justify-content:center;flex-wrap:wrap}
+.scan-chip{font-size:10px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted);transition:all .2s}
+.scan-chip.got{border-color:var(--green);color:var(--green);background:#3dffb011}
+.scan-chip.need{border-color:var(--orange);color:var(--orange);animation:pulse 1s infinite}
+
+/* SAS box */
+.sas-box{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center}
+.sas-words{font-family:var(--sans);font-weight:800;font-size:18px;color:var(--accent);letter-spacing:1px;margin:8px 0;word-spacing:6px}
+.sas-hex{font-size:11px;color:var(--muted);letter-spacing:2px;margin-bottom:6px;font-family:var(--mono)}
+.sas-actions{display:flex;gap:6px;margin-top:10px}
+.sas-actions .btn{flex:1}
+
+/* lock overlay */
+.lock-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.96);backdrop-filter:blur(20px);z-index:9000;align-items:center;justify-content:center;flex-direction:column;gap:14px}
+.lock-ov.open{display:flex}
+.lock-ov .lk-ic{font-size:64px;animation:pulse 2s infinite}
+.lock-ov .lk-tx{font-size:13px;color:var(--muted)}
+
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+@media(max-width:640px){
+  .sidebar{position:absolute;z-index:200;height:100%;top:0;width:88%;max-width:330px}
+  .sidebar.hidden{display:none}
+  .logo{font-size:14px}
+  .hdr-right .enc-badge{display:none}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><span class="logo-dot"></span>P2P / Encrypted Chat</div>
+  <div class="hdr-right">
+    <div class="enc-badge" id="encBadge" title="クリックでセーフティ番号を表示">🔓 未接続</div>
+    <div class="status-pill" id="statusPill">
+      <span class="status-dot"></span>
+      <span id="statusText">disconnected</span>
+    </div>
+  </div>
+</header>
+
+<div class="app">
+  <!-- ── sidebar ── -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-inner">
+
+      <div>
+        <div class="section-label">接続ロール</div>
+        <div style="display:flex;gap:7px">
+          <button class="btn btn-primary" id="btnOffer" type="button">📡 発信者 (Offer)</button>
+          <button class="btn" id="btnAnswer" type="button">📥 受信者 (Answer)</button>
+        </div>
+      </div>
+
+      <!-- Offer flow -->
+      <div id="offerSection" style="display:none;flex-direction:column;gap:9px">
+        <div class="step">
+          <div class="step-title"><span class="step-num">1</span>Offer を相手に渡す</div>
+          <textarea class="sdp" id="offerSDP" readonly placeholder="Offer を生成中..." spellcheck="false"></textarea>
+          <div class="btn-row">
+            <button class="btn" data-act="copy" data-target="offerSDP" type="button">📋 コピー</button>
+            <button class="btn btn-orange" data-act="qr" data-target="offerSDP" data-title="Offer QR" type="button">▦ QR表示</button>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-title"><span class="step-num">2</span>相手の Answer を入力</div>
+          <textarea class="sdp" id="answerInput" placeholder="貼り付け or QRスキャン..." spellcheck="false" autocomplete="off"></textarea>
+          <div class="btn-row">
+            <button class="btn btn-cyan" data-act="scan" data-target="answerInput" type="button">📷 QRスキャン</button>
+            <button class="btn btn-green" id="applyAnswerBtn" type="button">✅ 接続</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Answer flow -->
+      <div id="answerSection" style="display:none;flex-direction:column;gap:9px">
+        <div class="step">
+          <div class="step-title"><span class="step-num">1</span>相手の Offer を入力</div>
+          <textarea class="sdp" id="offerInput" placeholder="貼り付け or QRスキャン..." spellcheck="false" autocomplete="off"></textarea>
+          <div class="btn-row">
+            <button class="btn btn-cyan" data-act="scan" data-target="offerInput" type="button">📷 QRスキャン</button>
+            <button class="btn btn-primary" id="processOfferBtn" type="button">⚡ Answer 生成</button>
+          </div>
+        </div>
+        <div class="step" id="answerOutputStep" style="display:none">
+          <div class="step-title"><span class="step-num">2</span>Answer を相手に渡す</div>
+          <textarea class="sdp" id="answerSDP" readonly placeholder="Answer を生成中..." spellcheck="false"></textarea>
+          <div class="btn-row">
+            <button class="btn" data-act="copy" data-target="answerSDP" type="button">📋 コピー</button>
+            <button class="btn btn-orange" data-act="qr" data-target="answerSDP" data-title="Answer QR" type="button">▦ QR表示</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- post-connect actions -->
+      <div id="postConnectSection" style="display:none;flex-direction:column;gap:9px">
+        <button class="btn btn-cyan" id="showSasBtn" type="button">🛡️ セーフティ番号を確認</button>
+        <button class="btn btn-orange" id="lockBtn" type="button">🔒 画面ロック</button>
+        <button class="btn btn-red" id="resetBtn" type="button">🗑️ 切断 & 全消去</button>
+      </div>
+
+      <div style="font-size:10px;color:var(--muted);line-height:1.8;border-top:1px solid var(--border);padding-top:11px">
+        🔒 ECDH P-256 鍵交換 + AES-GCM 256bit<br>
+        🛡️ MITM 防御: セーフティ番号で口頭照合<br>
+        📡 接続後はサーバー不要・完全P2P<br>
+        ▦ QRは複数枚に自動分割<br>
+        🧹 履歴は全てメモリ内のみ・タブを閉じると消滅
+      </div>
+    </div>
+  </div>
+
+  <!-- ── chat ── -->
+  <div class="chat-area">
+    <div class="messages" id="messages">
+      <div class="msg-system">接続を確立してチャットを開始してください</div>
+    </div>
+    <button class="scroll-jump" id="scrollJump" type="button" title="最新へ">↓</button>
+    <div class="input-bar">
+      <button class="icon-btn" id="sidebarToggle" type="button" title="接続パネル">☰</button>
+      <input type="file" id="fileInput" style="display:none" multiple>
+      <button class="icon-btn" id="fileBtn" type="button" title="ファイル送信" disabled>📎</button>
+      <textarea class="msg-input" id="msgInput" placeholder="メッセージ... (Enter送信 / Shift+Enter改行)" rows="1" disabled></textarea>
+      <button class="send-btn" id="sendBtn" type="button" disabled>↑</button>
+    </div>
+  </div>
+</div>
+
+<!-- lightbox -->
+<div class="lightbox" id="lightbox">
+  <img id="lightboxImg" src="" alt="">
+</div>
+
+<!-- ── QR Modal ── -->
+<div class="modal-ov" id="qrModal">
+  <div class="modal-box" style="max-width:360px">
+    <div class="modal-hdr">
+      <span class="modal-title" id="qrModalTitle">QR Code</span>
+      <button class="modal-close" id="qrCloseBtn" type="button">✕ 閉じる</button>
+    </div>
+    <div id="qrWrap"><span style="color:#555;font-size:12px">生成中...</span></div>
+    <div class="qr-dots" id="qrDots"></div>
+    <div class="qr-nav" id="qrNav" style="display:none">
+      <button class="btn" id="qrPrevBtn" type="button">◀</button>
+      <span class="qr-page-info" id="qrPageInfo"></span>
+      <button class="btn" id="qrNextBtn" type="button">▶</button>
+    </div>
+    <div class="qr-auto" id="qrAuto" style="display:none">
+      <label><input type="checkbox" id="qrAutoChk" checked> 自動切替 (1.5秒)</label>
+    </div>
+    <div class="qr-meta" id="qrMeta"></div>
+    <p class="modal-hint" id="qrHint">相手の 📷 QRスキャン で読み取ってください</p>
+  </div>
+</div>
+
+<!-- ── Scanner Modal ── -->
+<div class="modal-ov" id="scanModal">
+  <div class="modal-box">
+    <div class="modal-hdr">
+      <span class="modal-title">📷 QRスキャン</span>
+      <button class="modal-close" id="scanCloseBtn" type="button">✕ キャンセル</button>
+    </div>
+    <div class="scanner-wrap" id="scannerWrap">
+      <video id="scanVideo" autoplay playsinline muted></video>
+      <canvas id="scanCanvas"></canvas>
+      <div class="sc-corner tl"></div><div class="sc-corner tr"></div>
+      <div class="sc-corner bl"></div><div class="sc-corner br"></div>
+      <div class="scan-line" id="scanLine"></div>
+    </div>
+    <div class="scan-chips" id="scanChips" style="display:none"></div>
+    <div class="scan-status-row">
+      <span class="blink-dot" id="scanBlink"></span>
+      <span id="scanStatusText">カメラにQRをかざしてください</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── SAS Modal ── -->
+<div class="modal-ov" id="sasModal">
+  <div class="modal-box">
+    <div class="modal-hdr">
+      <span class="modal-title">🛡️ セーフティ番号</span>
+      <button class="modal-close" id="sasCloseBtn" type="button">✕ 閉じる</button>
+    </div>
+    <p class="modal-hint">
+      この番号と単語を相手と<strong>別の経路</strong>(電話・対面など) で照合してください。<br>
+      一致すれば中間者攻撃 (MITM) を排除できます。
+    </p>
+    <div class="sas-box">
+      <div class="sas-hex" id="sasHex">--------</div>
+      <div class="sas-words" id="sasWords">- - - -</div>
+    </div>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-green" style="flex:1" id="sasVerifyBtn" type="button">✅ 一致を確認</button>
+      <button class="btn btn-red" style="flex:1" id="sasRejectBtn" type="button">⚠️ 不一致 — 切断</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Lock Overlay ── -->
+<div class="lock-ov" id="lockOv">
+  <div class="lk-ic">🔒</div>
+  <div class="lk-tx">画面ロック中</div>
+  <button class="btn btn-primary" id="unlockBtn" type="button">タップして解除</button>
+</div>
+
+<script>
+'use strict';
+// ════════════════════════════════════════════════════════════════
+//  P2P Encrypted Chat — Improved Build
+//  Bug fixes: ordered file reassembly, robust queue, URL.revoke,
+//             scroll preservation, ESC handling, modal cleanup
+//  Security : SAS verification (MITM protection), AAD binding,
+//             monotonic seq counter (replay protection),
+//             screen lock, paste-clipboard auto-clear,
+//             session-bound scratch only (no localStorage)
+// ════════════════════════════════════════════════════════════════
+
+// ── CONSTANTS ───────────────────────────────────────────────
+const FILE_CHUNK     = 16 * 1024;        // 16 KB per file chunk
+const MAX_FILE_SIZE  = 200 * 1024 * 1024;// 200 MB hard limit
+const QR_CHUNK       = 900;              // chars of base64url per QR page
+const QR_AUTO_MS     = 1500;             // QR auto-rotate interval
+const ICE_TIMEOUT_MS = 8000;
+const MAX_TEXT_LEN   = 16000;            // single message hard cap
+const BUF_HIGH       = 1 << 20;          // 1 MB high-water mark
+const BUF_LOW        = 256 * 1024;       // 256 KB low-water mark
+const ICE_SERVERS    = [
+  {urls:'stun:stun.l.google.com:19302'},
+  {urls:'stun:stun1.l.google.com:19302'},
+  {urls:'stun:stun.cloudflare.com:3478'},
+];
+
+// SAS dictionary — PGP word list (subset, 64 words for 6-bit indexing)
+const SAS_WORDS = [
+  'apple','bravo','cargo','delta','eagle','forge','grape','hotel',
+  'igloo','juice','knock','lemon','mango','novel','olive','piano',
+  'quilt','river','solar','tiger','umbra','viola','whale','xenon',
+  'yacht','zebra','amber','brisk','candy','dolly','ember','flute',
+  'gusto','honey','ivory','jolly','karma','laser','melon','nylon',
+  'opera','peach','quark','rusty','swing','torch','union','vivid',
+  'wagon','xerox','yodel','zesty','arrow','bloom','crisp','daisy',
+  'evoke','fauna','glide','haven','islet','jewel','kappa','lunar'
+];
+
+// ── STATE ───────────────────────────────────────────────────
+let pc = null, dc = null, cryptoKey = null;
+let ecdhKeyPair = null, ecdhPubB64 = null;
+let myRole = null;             // 'offer' | 'answer'
+let theirPubB64 = null;        // remote public key (raw b64) for SAS
+let sessionId = null;          // 16 random bytes shared via SDP, used as AAD
+let sasVerified = false;
+let connectedAt = 0;
+
+let sidebarVisible = window.innerWidth > 640;
+let autoScroll     = true;     // user is at bottom
+
+// DataChannel ordered processing — both control msgs and binary chunks
+const msgQueue = [];
+let   msgProcessing = false;
+
+// Monotonic counters for replay protection
+let sendSeq = 0;
+let lastRecvSeq = -1;          // monotonic per-sender
+
+// Incoming file state — keyed by fileId (hex)
+const incomingFiles = {};      // {name,mime,total,size,received,parts:[],progressEl,seqExpected}
+
+// Active object URLs for cleanup
+const liveURLs = new Set();
+
+// QR carousel state
+let qrPages = [];
+let qrIndex = 0;
+let qrAutoTimer = null;
+
+// Scanner state
+let scanTarget = null, scanStream = null, scanRAF = null;
+let scanChunks = {}, scanTotal = 0;
+
+// Locked state
+let locked = false;
+
+// ── UTILITIES ───────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+
+function el(tag, cls){ const e=document.createElement(tag); if(cls) e.className=cls; return e; }
+function now(){ return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}); }
+
+function escapeText(s){ // for safe textContent (we use textContent, but keep helper)
+  return String(s);
+}
+
+// Safe base64 encode/decode for large arrays
+function uint8ToB64(u8){
+  let bin = '';
+  const len = u8.length, batch = 0x8000;
+  for (let i=0; i<len; i+=batch) bin += String.fromCharCode(...u8.subarray(i, i+batch));
+  return btoa(bin);
+}
+function b64ToUint8(b64){
+  const raw = atob(b64);
+  const u8  = new Uint8Array(raw.length);
+  for (let i=0; i<raw.length; i++) u8[i] = raw.charCodeAt(i);
+  return u8;
+}
+const toB64url   = b64  => b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+const fromB64url = b64u => { const s = b64u.replace(/-/g,'+').replace(/_/g,'/'); return s + '='.repeat((4 - s.length%4)%4); };
+
+function bytesToHex(u8){
+  let s=''; for (let i=0;i<u8.length;i++) s += u8[i].toString(16).padStart(2,'0');
+  return s;
+}
+function hexToBytes(hex){
+  const u8 = new Uint8Array(hex.length/2);
+  for (let i=0;i<u8.length;i++) u8[i] = parseInt(hex.substr(i*2,2),16);
+  return u8;
+}
+function constTimeEq(a,b){
+  if (a.length !== b.length) return false;
+  let r=0; for (let i=0;i<a.length;i++) r |= a[i]^b[i];
+  return r === 0;
+}
+
+// Object URL lifecycle
+function makeURL(blob){ const u = URL.createObjectURL(blob); liveURLs.add(u); return u; }
+function revokeAllURLs(){ for (const u of liveURLs) try{ URL.revokeObjectURL(u); }catch{} liveURLs.clear(); }
+
+// ── COMPRESSION ─────────────────────────────────────────────
+async function compress(str){
+  if (typeof CompressionStream === 'undefined') {
+    // Fallback: no compression
+    return toB64url(uint8ToB64(new TextEncoder().encode(str)));
+  }
+  const cs = new CompressionStream('deflate-raw');
+  const w  = cs.writable.getWriter();
+  w.write(new TextEncoder().encode(str));
+  w.close();
+  const chunks = [];
+  const r = cs.readable.getReader();
+  for(;;){ const {done,value}=await r.read(); if(done) break; chunks.push(value); }
+  const total = chunks.reduce((a,c)=>a+c.length,0);
+  const out = new Uint8Array(total);
+  let off = 0; for (const c of chunks){ out.set(c,off); off += c.length; }
+  return 'D' + toB64url(uint8ToB64(out));
+}
+async function decompress(b64url){
+  // 'D' prefix indicates deflate-compressed; otherwise raw
+  if (b64url.startsWith('D')) {
+    const payload = b64url.slice(1);
+    const u8 = b64ToUint8(fromB64url(payload));
+    const ds = new DecompressionStream('deflate-raw');
+    const w = ds.writable.getWriter();
+    w.write(u8); w.close();
+    const chunks = [];
+    const r = ds.readable.getReader();
+    for(;;){ const {done,value}=await r.read(); if(done) break; chunks.push(value); }
+    const total = chunks.reduce((a,c)=>a+c.length,0);
+    const out = new Uint8Array(total);
+    let off=0; for(const c of chunks){ out.set(c,off); off+=c.length; }
+    return new TextDecoder().decode(out);
+  }
+  return new TextDecoder().decode(b64ToUint8(fromB64url(b64url)));
+}
+
+// ── CRYPTO ──────────────────────────────────────────────────
+async function initECDH(){
+  ecdhKeyPair = await crypto.subtle.generateKey(
+    {name:'ECDH', namedCurve:'P-256'}, true, ['deriveKey']
+  );
+  const raw = await crypto.subtle.exportKey('raw', ecdhKeyPair.publicKey);
+  ecdhPubB64 = uint8ToB64(new Uint8Array(raw));
+}
+
+async function deriveSharedKey(theirPubB64In){
+  const raw = b64ToUint8(theirPubB64In);
+  const theirPub = await crypto.subtle.importKey(
+    'raw', raw, {name:'ECDH', namedCurve:'P-256'}, false, []
+  );
+  cryptoKey = await crypto.subtle.deriveKey(
+    {name:'ECDH', public:theirPub}, ecdhKeyPair.privateKey,
+    {name:'AES-GCM', length:256}, false, ['encrypt','decrypt']
+  );
+  theirPubB64 = theirPubB64In;
+}
+
+// AAD = sessionId (16B) — binds ciphertext to this exact session
+function getAAD(){ return sessionId ? sessionId : new Uint8Array(0); }
+
+async function encrypt(str){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt(
+    {name:'AES-GCM', iv, additionalData:getAAD()}, cryptoKey,
+    new TextEncoder().encode(str));
+  const buf = new Uint8Array(12 + ct.byteLength);
+  buf.set(iv); buf.set(new Uint8Array(ct), 12);
+  return uint8ToB64(buf);
+}
+async function decrypt(b64){
+  const buf = b64ToUint8(b64);
+  const pt  = await crypto.subtle.decrypt(
+    {name:'AES-GCM', iv:buf.slice(0,12), additionalData:getAAD()},
+    cryptoKey, buf.slice(12)
+  );
+  return new TextDecoder().decode(pt);
+}
+async function encryptBin(ab){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt(
+    {name:'AES-GCM', iv, additionalData:getAAD()}, cryptoKey, ab);
+  const out = new Uint8Array(12 + ct.byteLength);
+  out.set(iv); out.set(new Uint8Array(ct), 12);
+  return out.buffer;
+}
+async function decryptBin(ab){
+  const buf = new Uint8Array(ab);
+  return crypto.subtle.decrypt(
+    {name:'AES-GCM', iv:buf.slice(0,12), additionalData:getAAD()},
+    cryptoKey, buf.slice(12)
+  );
+}
+
+// ── SAS (Short Authentication String) ───────────────────────
+// SHA-256(sortedConcat(myPub, theirPub) || sessionId) → first 8 bytes
+async function computeSAS(){
+  if (!ecdhPubB64 || !theirPubB64 || !sessionId) return null;
+  const a = b64ToUint8(ecdhPubB64);
+  const b = b64ToUint8(theirPubB64);
+  // Sort lexicographically so both sides compute the same value
+  const [first, second] = (compareBytes(a,b) < 0) ? [a,b] : [b,a];
+  const buf = new Uint8Array(first.length + second.length + sessionId.length);
+  buf.set(first, 0);
+  buf.set(second, first.length);
+  buf.set(sessionId, first.length + second.length);
+  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+  const sas8 = hash.slice(0, 8);
+  // 4 words from 24 bits (6-bit indexing into SAS_WORDS[64])
+  const words = [];
+  // Use first 24 bits → 4×6-bit words
+  const v = (sas8[0]<<16) | (sas8[1]<<8) | sas8[2];
+  words.push(SAS_WORDS[(v>>18)&0x3F]);
+  words.push(SAS_WORDS[(v>>12)&0x3F]);
+  words.push(SAS_WORDS[(v>>6) &0x3F]);
+  words.push(SAS_WORDS[ v     &0x3F]);
+  // 4-digit hex group ×2 from next bytes for redundancy
+  const hex = bytesToHex(sas8).match(/.{4}/g).join(' ');
+  return {hex, words};
+}
+function compareBytes(a,b){
+  const n = Math.min(a.length,b.length);
+  for (let i=0;i<n;i++) if (a[i]!==b[i]) return a[i]-b[i];
+  return a.length - b.length;
+}
+
+// ── WEBRTC ──────────────────────────────────────────────────
+function createPC(){
+  pc = new RTCPeerConnection({iceServers: ICE_SERVERS});
+  pc.onconnectionstatechange = onConnStateChange;
+  pc.oniceconnectionstatechange = () => {
+    if (pc && pc.iceConnectionState === 'failed') {
+      addSystem('⚠️ ICE 接続失敗 — ネットワークを確認してください', 'err');
+    }
+  };
+  pc.ondatachannel = e => setupDC(e.channel);
+}
+
+function onConnStateChange(){
+  if (!pc) return;
+  updateStatus(pc.connectionState);
+  if (pc.connectionState === 'connected') {
+    if (!connectedAt) {
+      connectedAt = Date.now();
+      onConnected();
+    }
+  } else if (['disconnected','failed','closed'].includes(pc.connectionState)) {
+    $('sendBtn').disabled = true;
+    $('fileBtn').disabled = true;
+    $('msgInput').disabled = true;
+    if (pc.connectionState === 'disconnected') addSystem('⚠️ 接続が切断されました', 'warn');
+    if (pc.connectionState === 'failed')        addSystem('❌ 接続失敗', 'err');
+  }
+}
+
+async function onConnected(){
+  $('msgInput').disabled = false;
+  $('fileBtn').disabled  = false;
+  $('postConnectSection').style.display = 'flex';
+  $('encBadge').classList.add('active');
+  $('encBadge').textContent = '🔒 E2E AES-GCM';
+  addSystem('🔒 P2P接続確立 — E2E暗号化チャット開始');
+
+  // Show SAS prompt
+  const sas = await computeSAS();
+  if (sas) {
+    addSystem(`🛡️ セーフティ番号: ${sas.words.join(' · ')} (要照合)`, 'warn');
+  }
+}
+
+function setupDC(channel){
+  dc = channel;
+  dc.binaryType = 'arraybuffer';
+  dc.bufferedAmountLowThreshold = BUF_LOW;
+  dc.onmessage = e => {
+    msgQueue.push(e.data);
+    if (!msgProcessing) processNextMsg();
+  };
+  dc.onclose = () => { addSystem('📡 データチャネル閉鎖', 'warn'); };
+  dc.onerror = ev => { console.error('[dc error]', ev); };
+}
+
+// Sequential message processor — uses a loop, not recursion (no stack growth)
+async function processNextMsg(){
+  if (msgProcessing) return;
+  msgProcessing = true;
+  while (msgQueue.length > 0) {
+    const data = msgQueue.shift();
+    try {
+      if (typeof data === 'string') await handleCtrlMsg(JSON.parse(data));
+      else                          await handleBinChunk(data);
+    } catch (e) {
+      console.error('[DC msg error]', e);
+      addSystem('⚠️ メッセージ処理エラー (改ざん? 復号失敗?)', 'err');
+    }
+  }
+  msgProcessing = false;
+}
+
+async function handleCtrlMsg(msg){
+  // Replay protection — every ctrl msg has monotonic seq
+  if (typeof msg.seq === 'number') {
+    if (msg.seq <= lastRecvSeq) {
+      console.warn('[replay] dropped seq', msg.seq, '<=', lastRecvSeq);
+      return;
+    }
+    lastRecvSeq = msg.seq;
+  }
+
+  if (msg.type === 'text') {
+    const plain = await decrypt(msg.payload);
+    addMessage(plain, 'them');
+
+  } else if (msg.type === 'file-meta') {
+    if (typeof msg.size === 'number' && msg.size > MAX_FILE_SIZE) {
+      addSystem(`⚠️ 受信拒否: ファイルが大きすぎます (${humanSize(msg.size)})`, 'err');
+      return;
+    }
+    const safeName = sanitizeFileName(msg.name || 'file');
+    incomingFiles[msg.id] = {
+      name: safeName,
+      mime: msg.mime || 'application/octet-stream',
+      total: msg.total|0,
+      size:  msg.size|0,
+      parts: new Array(msg.total|0),  // index by chunkIndex — preserves order!
+      received: 0,
+      progressEl: null
+    };
+    // Show progress bubble
+    incomingFiles[msg.id].progressEl = addReceivingFileBubble(safeName, msg.size|0);
+
+  } else if (msg.type === 'file-done') {
+    const f = incomingFiles[msg.id];
+    if (!f) return;
+    if (f.received !== f.total) {
+      addSystem(`⚠️ ファイル不完全: ${f.name} (${f.received}/${f.total})`, 'err');
+      delete incomingFiles[msg.id];
+      return;
+    }
+    // All chunks arrived in order → assemble
+    const blobParts = f.parts.map(ab => new Uint8Array(ab));
+    const blob = new Blob(blobParts, {type: f.mime});
+    const url  = makeURL(blob);
+    if (f.progressEl && f.progressEl.parentNode) f.progressEl.remove();
+    addFileMessage(f.name, f.mime, url, 'them', blob.size);
+    delete incomingFiles[msg.id];
+
+  } else if (msg.type === 'ping') {
+    sendCtrl({type:'pong', t:msg.t});
+
+  } else if (msg.type === 'bye') {
+    addSystem('👋 相手が切断しました', 'warn');
+    setTimeout(() => fullReset(false), 600);
+  }
+}
+
+async function handleBinChunk(buf){
+  // Format: [8B fileId] [4B chunkIndex (BE)] [encrypted body]
+  if (buf.byteLength < 12) return;
+  const view  = new DataView(buf);
+  const idU8  = new Uint8Array(buf, 0, 8);
+  const fileId = bytesToHex(idU8);
+  const idx   = view.getUint32(8, false);
+  const f = incomingFiles[fileId];
+  if (!f) { console.warn('[chunk] unknown fileId', fileId); return; }
+  if (idx >= f.total || f.parts[idx]) return; // out of range or duplicate
+  const plain = await decryptBin(buf.slice(12));
+  f.parts[idx] = plain;
+  f.received++;
+  if (f.progressEl) {
+    const pct = Math.round((f.received/f.total)*100);
+    const fill = f.progressEl.querySelector('.msg-progress-fill');
+    if (fill) fill.style.width = pct + '%';
+    const meta = f.progressEl.querySelector('.fmeta');
+    if (meta) meta.textContent = `受信中… ${pct}%`;
+  }
+}
+
+// ── OFFER / ANSWER ──────────────────────────────────────────
+async function waitICE(){
+  return new Promise(resolve => {
+    if (pc.iceGatheringState === 'complete') return resolve();
+    let done = false;
+    const finish = () => { if (done) return; done = true; pc.removeEventListener('icegatheringstatechange', check); resolve(); };
+    const check = () => { if (pc.iceGatheringState === 'complete') finish(); };
+    pc.addEventListener('icegatheringstatechange', check);
+    setTimeout(finish, ICE_TIMEOUT_MS);
+  });
+}
+
+function buildSdpPayload(){
+  if (!sessionId) sessionId = crypto.getRandomValues(new Uint8Array(16));
+  return JSON.stringify({
+    v: 1,
+    sdp:  pc.localDescription.sdp,
+    type: pc.localDescription.type,
+    pub:  ecdhPubB64,
+    sid:  uint8ToB64(sessionId),
+    ts:   Date.now()
+  });
+}
+
+function parseSdpPayload(raw){
+  let obj;
+  try { obj = JSON.parse(raw); } catch { throw new Error('JSON 形式が無効です'); }
+  if (!obj.sdp || !obj.type || !obj.pub || !obj.sid) throw new Error('必須フィールド欠損');
+  if (obj.v && obj.v !== 1) throw new Error('プロトコルバージョン不一致');
+  // Reject ancient offers (>10 min) to prevent replay reuse
+  if (obj.ts && Math.abs(Date.now() - obj.ts) > 10*60*1000) {
+    throw new Error('Offer/Answer が古すぎます (10分超)');
+  }
+  return obj;
+}
+
+async function startOffer(){
+  try {
+    disableRoleButtons();
+    myRole = 'offer';
+    sessionId = crypto.getRandomValues(new Uint8Array(16));
+    await initECDH();
+    createPC();
+    dc = pc.createDataChannel('chat', {ordered:true});
+    setupDC(dc);
+    await pc.setLocalDescription(await pc.createOffer());
+    addSystem('⏳ ICEアドレスを収集中...');
+    await waitICE();
+    $('offerSDP').value = buildSdpPayload();
+    $('offerSection').style.display = 'flex';
+    addSystem('✅ Offer 生成完了 — 相手に渡してください');
+  } catch (e) {
+    addSystem('❌ Offer生成失敗: ' + e.message, 'err');
+    enableRoleButtons();
+  }
+}
+
+async function showAnswerUI(){
+  try {
+    disableRoleButtons();
+    myRole = 'answer';
+    await initECDH();
+    $('answerSection').style.display = 'flex';
+  } catch (e) {
+    addSystem('❌ 初期化失敗: ' + e.message, 'err');
+    enableRoleButtons();
+  }
+}
+
+async function processOffer(){
+  const ta = $('offerInput');
+  const raw = ta.value.trim();
+  if (!raw) { flashInvalid(ta); alert('Offer を入力してください'); return; }
+  let obj;
+  try { obj = parseSdpPayload(raw); }
+  catch (e) { flashInvalid(ta); alert('無効な Offer: ' + e.message); return; }
+
+  const btn = $('processOfferBtn');
+  btn.disabled = true;
+  try {
+    sessionId = b64ToUint8(obj.sid);
+    await deriveSharedKey(obj.pub);
+    createPC();
+    await pc.setRemoteDescription({type: obj.type, sdp: obj.sdp});
+    await pc.setLocalDescription(await pc.createAnswer());
+    addSystem('⏳ ICEアドレスを収集中...');
+    await waitICE();
+    $('answerSDP').value = buildSdpPayload();
+    $('answerOutputStep').style.display = 'block';
+    flashValid(ta);
+    addSystem('✅ Answer 生成完了 — 相手に渡してください');
+  } catch (e) {
+    addSystem('❌ Answer生成失敗: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function applyAnswer(){
+  if (pc && pc.remoteDescription) {
+    addSystem('⚠️ 既に Answer 適用済みです', 'warn');
+    return;
+  }
+  const ta = $('answerInput');
+  const raw = ta.value.trim();
+  if (!raw) { flashInvalid(ta); alert('Answer を入力してください'); return; }
+  let obj;
+  try { obj = parseSdpPayload(raw); }
+  catch (e) { flashInvalid(ta); alert('無効な Answer: ' + e.message); return; }
+
+  const btn = $('applyAnswerBtn');
+  btn.disabled = true;
+  try {
+    // session id must match what we generated
+    const remoteSid = b64ToUint8(obj.sid);
+    if (!constTimeEq(remoteSid, sessionId)) {
+      throw new Error('セッション ID 不一致 — 別の接続データの可能性');
+    }
+    await deriveSharedKey(obj.pub);
+    await pc.setRemoteDescription({type: obj.type, sdp: obj.sdp});
+    flashValid(ta);
+    addSystem('⏳ 接続を確立中...');
+  } catch (e) {
+    addSystem('❌ 接続失敗: ' + e.message, 'err');
+    flashInvalid(ta);
+    btn.disabled = false;
+  }
+}
+
+function flashInvalid(ta){ ta.classList.add('invalid'); ta.classList.remove('valid'); setTimeout(()=>ta.classList.remove('invalid'),1500); }
+function flashValid(ta){ ta.classList.add('valid'); ta.classList.remove('invalid'); }
+
+function disableRoleButtons(){ $('btnOffer').disabled = true; $('btnAnswer').disabled = true; }
+function enableRoleButtons(){ $('btnOffer').disabled = false; $('btnAnswer').disabled = false; }
+
+// ── QR — MULTI-PAGE CAROUSEL ────────────────────────────────
+async function showQR(textareaId, title){
+  const raw = $(textareaId).value.trim();
+  if (!raw) { alert('まず生成してください'); return; }
+
+  $('qrModalTitle').textContent = title;
+  $('qrWrap').innerHTML = '<span style="color:#555;font-size:12px">圧縮中...</span>';
+  $('qrMeta').textContent = '';
+  $('qrNav').style.display = 'none';
+  $('qrAuto').style.display = 'none';
+  $('qrDots').innerHTML = '';
+  $('qrHint').textContent = '相手の 📷 QRスキャン で読み取ってください';
+  $('qrModal').classList.add('open');
+
+  let compressed;
+  try { compressed = await compress(raw); }
+  catch (e) { $('qrWrap').innerHTML='<p style="color:var(--red);font-size:11px;padding:16px">圧縮エラー</p>'; return; }
+
+  qrPages = [];
+  for (let i = 0; i < compressed.length; i += QR_CHUNK) {
+    qrPages.push(compressed.slice(i, i + QR_CHUNK));
+  }
+  qrIndex = 0;
+
+  const byteEst = Math.ceil(compressed.length * 6 / 8);
+  $('qrMeta').textContent = `元: ${raw.length}B → 圧縮後: ≈${byteEst}B / ${qrPages.length}枚のQR`;
+
+  if (qrPages.length > 1) {
+    $('qrNav').style.display = 'flex';
+    $('qrAuto').style.display = 'flex';
+    $('qrHint').textContent = `${qrPages.length}枚のQRを順番に全て読み取ってもらってください`;
+    if ($('qrAutoChk').checked) startQrAuto();
+  }
+
+  renderQRDots();
+  renderQR();
+}
+
+function startQrAuto(){
+  stopQrAuto();
+  if (qrPages.length <= 1) return;
+  qrAutoTimer = setInterval(() => {
+    qrIndex = (qrIndex + 1) % qrPages.length;
+    renderQR(); renderQRDots();
+  }, QR_AUTO_MS);
+}
+function stopQrAuto(){ if (qrAutoTimer) { clearInterval(qrAutoTimer); qrAutoTimer = null; } }
+
+function renderQRDots(){
+  const dots = $('qrDots');
+  dots.innerHTML = '';
+  for (let i = 0; i < qrPages.length; i++) {
+    const d = el('span', 'qr-dot' + (i === qrIndex ? ' active' : ''));
+    d.addEventListener('click', () => { qrIndex = i; renderQR(); renderQRDots(); });
+    dots.appendChild(d);
+  }
+}
+
+function renderQR(){
+  const wrap = $('qrWrap');
+  wrap.innerHTML = '';
+  const n = qrIndex + 1, total = qrPages.length;
+  $('qrPageInfo').textContent = `${n} / ${total}`;
+  $('qrPrevBtn').disabled = qrIndex === 0;
+  $('qrNextBtn').disabled = qrIndex === total - 1;
+  const qrData = `P2PC:${n}/${total}:${qrPages[qrIndex]}`;
+  try {
+    new QRCode(wrap, {text:qrData, width:240, height:240, colorDark:'#000', colorLight:'#fff', correctLevel:QRCode.CorrectLevel.M});
+  } catch {
+    try { new QRCode(wrap, {text:qrData, width:240, height:240, colorDark:'#000', colorLight:'#fff', correctLevel:QRCode.CorrectLevel.L}); }
+    catch { wrap.innerHTML = '<p style="color:var(--red);font-size:11px;padding:10px">QR生成失敗 — コピーをお使いください</p>'; }
+  }
+}
+
+function qrNav(dir){
+  const next = qrIndex + dir;
+  if (next < 0 || next >= qrPages.length) return;
+  qrIndex = next;
+  renderQR(); renderQRDots();
+  if ($('qrAutoChk').checked) startQrAuto(); // restart timer from manual nav
+}
+
+function closeQRModal(){
+  stopQrAuto();
+  $('qrModal').classList.remove('open');
+  $('qrWrap').innerHTML = '';
+  qrPages = []; qrIndex = 0;
+}
+
+// ── SCANNER ─────────────────────────────────────────────────
+async function openScanner(targetId){
+  scanTarget = targetId;
+  scanChunks = {}; scanTotal = 0;
+  $('scannerWrap').querySelector('.scan-overlay')?.remove();
+  $('scanLine').style.display = 'block';
+  $('scanStatusText').textContent = 'カメラにQRをかざしてください';
+  $('scanBlink').style.display = 'inline-block';
+  $('scanChips').style.display = 'none';
+  $('scanChips').innerHTML = '';
+  $('scanModal').classList.add('open');
+
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:'environment', width:{ideal:1280}, height:{ideal:720}}
+    });
+    const video = $('scanVideo');
+    video.srcObject = scanStream;
+    await video.play();
+    scanRAF = requestAnimationFrame(doScanFrame);
+  } catch (e) {
+    $('scanStatusText').textContent = '❌ カメラアクセス拒否: ' + (e.message || e.name);
+    $('scanBlink').style.display = 'none';
+  }
+}
+
+function doScanFrame(){
+  if (!scanStream) return;
+  const video = $('scanVideo'), canvas = $('scanCanvas');
+  if (video.readyState !== video.HAVE_ENOUGH_DATA) {
+    scanRAF = requestAnimationFrame(doScanFrame); return;
+  }
+  canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d', {willReadFrequently:true});
+  ctx.drawImage(video, 0, 0);
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const code = jsQR(img.data, img.width, img.height, {inversionAttempts:'dontInvert'});
+  if (code && code.data) handleScanResult(code.data);
+  else                   scanRAF = requestAnimationFrame(doScanFrame);
+}
+
+async function handleScanResult(rawData){
+  if (!rawData.startsWith('P2PC:')) {
+    // Legacy / direct paste of raw JSON
+    try {
+      JSON.parse(rawData);
+      $(scanTarget).value = rawData;
+      scanSuccess(); return;
+    } catch {
+      scanRAF = requestAnimationFrame(doScanFrame); return;
+    }
+  }
+
+  const body = rawData.slice(5);
+  const sep  = body.indexOf(':');
+  if (sep === -1) { scanRAF = requestAnimationFrame(doScanFrame); return; }
+  const pageInfo = body.slice(0, sep);
+  const chunkData = body.slice(sep + 1);
+  const slash = pageInfo.indexOf('/');
+  if (slash === -1) { scanRAF = requestAnimationFrame(doScanFrame); return; }
+  const n = parseInt(pageInfo.slice(0, slash), 10);
+  const total = parseInt(pageInfo.slice(slash + 1), 10);
+  if (!Number.isFinite(n) || !Number.isFinite(total) || n < 1 || total < 1 || n > total) {
+    scanRAF = requestAnimationFrame(doScanFrame); return;
+  }
+
+  if (scanTotal !== 0 && scanTotal !== total) {
+    scanChunks = {}; scanTotal = 0;
+    setScanMsg('⚠️ 別のQRセッションを検出 — リセットしました');
+  }
+  scanTotal = total;
+
+  if (scanChunks[n]) { scanRAF = requestAnimationFrame(doScanFrame); return; }
+  scanChunks[n] = chunkData;
+  updateScanChips();
+
+  const collected = Object.keys(scanChunks).length;
+  if (collected < total) {
+    const missing = [];
+    for (let i = 1; i <= total; i++) if (!scanChunks[i]) missing.push(i);
+    setScanMsg(`${collected}/${total} 収集済み — 残り: ${missing.slice(0,5).join(',')}${missing.length>5?'…':''}`);
+    scanRAF = requestAnimationFrame(doScanFrame); return;
+  }
+
+  const fullCompressed = Array.from({length:total}, (_,i) => scanChunks[i+1]).join('');
+  try {
+    const json = await decompress(fullCompressed);
+    JSON.parse(json); // validate shape
+    $(scanTarget).value = json;
+    scanSuccess();
+  } catch {
+    scanError('データ復元エラー。最初からやり直してください');
+  }
+}
+
+function updateScanChips(){
+  const chips = $('scanChips');
+  chips.style.display = 'flex';
+  chips.innerHTML = '';
+  for (let i = 1; i <= scanTotal; i++) {
+    const c = el('span', 'scan-chip ' + (scanChunks[i] ? 'got' : 'need'));
+    c.textContent = scanChunks[i] ? `${i}枚目✅` : `${i}枚目⏳`;
+    chips.appendChild(c);
+  }
+}
+
+function setScanMsg(t){ $('scanStatusText').textContent = t; }
+
+function scanSuccess(){
+  if (scanRAF) cancelAnimationFrame(scanRAF);
+  scanRAF = null;
+  $('scanLine').style.display = 'none';
+  $('scanBlink').style.display = 'none';
+  const ov = el('div','scan-overlay');
+  ov.style.background = 'rgba(61,255,176,.18)';
+  ov.textContent = '✅';
+  $('scannerWrap').appendChild(ov);
+  setScanMsg('全ての QR を読み取りました！');
+  setTimeout(closeScanner, 700);
+}
+
+function scanError(msg){
+  if (scanRAF) cancelAnimationFrame(scanRAF);
+  scanRAF = null;
+  $('scanLine').style.display = 'none';
+  const ov = el('div','scan-overlay');
+  ov.style.background = 'rgba(255,90,90,.18)';
+  ov.textContent = '❌';
+  $('scannerWrap').appendChild(ov);
+  setScanMsg('❌ ' + msg);
+  setTimeout(() => {
+    if (!scanStream) return; // closed already
+    ov.remove();
+    scanChunks = {}; scanTotal = 0;
+    $('scanChips').innerHTML = ''; $('scanChips').style.display = 'none';
+    $('scanLine').style.display = 'block';
+    $('scanBlink').style.display = 'inline-block';
+    setScanMsg('カメラにQRをかざしてください');
+    scanRAF = requestAnimationFrame(doScanFrame);
+  }, 2500);
+}
+
+function closeScanner(){
+  $('scanModal').classList.remove('open');
+  if (scanRAF) cancelAnimationFrame(scanRAF);
+  scanRAF = null;
+  if (scanStream) { scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
+  $('scanVideo').srcObject = null;
+  scanChunks = {}; scanTotal = 0;
+}
+
+// ── MESSAGING ───────────────────────────────────────────────
+function sendCtrl(obj){
+  if (!dc || dc.readyState !== 'open') return false;
+  obj.seq = ++sendSeq;
+  try { dc.send(JSON.stringify(obj)); return true; }
+  catch (e) { console.error('[send ctrl]', e); return false; }
+}
+
+async function sendMessage(){
+  const input = $('msgInput');
+  const text = input.value.trim();
+  if (!text) return;
+  if (!dc || dc.readyState !== 'open') { addSystem('⚠️ 未接続', 'err'); return; }
+  if (text.length > MAX_TEXT_LEN) { addSystem(`⚠️ 文字数制限超過 (${text.length}/${MAX_TEXT_LEN})`, 'err'); return; }
+  try {
+    const payload = await encrypt(text);
+    if (!sendCtrl({type:'text', payload})) throw new Error('送信失敗');
+    addMessage(text, 'me');
+    input.value = '';
+    input.style.height = '38px';
+  } catch (e) {
+    addSystem('❌ 送信失敗: ' + e.message, 'err');
+  }
+}
+
+// ── FILE SENDING ────────────────────────────────────────────
+async function sendFile(inp){
+  const files = Array.from(inp.files || []);
+  inp.value = '';
+  for (const file of files) await sendOneFile(file);
+}
+
+async function sendOneFile(file){
+  if (!file || !dc || dc.readyState !== 'open') return;
+  if (file.size > MAX_FILE_SIZE) {
+    addSystem(`⚠️ ファイルが大きすぎます: ${file.name} (${humanSize(file.size)} > ${humanSize(MAX_FILE_SIZE)})`, 'err');
+    return;
+  }
+
+  const idBytes = crypto.getRandomValues(new Uint8Array(8));
+  const fileId  = bytesToHex(idBytes);
+  const mime    = file.type || guessMime(file.name);
+  const total   = Math.max(1, Math.ceil(file.size / FILE_CHUNK));
+
+  if (!sendCtrl({type:'file-meta', id:fileId, name:file.name, mime, total, size:file.size})) return;
+
+  // Local sending bubble with progress
+  const localUrl = makeURL(file);
+  const bubble = addFileMessage(file.name, mime, localUrl, 'me', file.size);
+  const fill   = bubble.querySelector('.msg-progress-fill');
+  const meta   = bubble.querySelector('.fmeta');
+
+  try {
+    for (let i = 0; i < total; i++) {
+      const sliceEnd = Math.min(file.size, (i+1) * FILE_CHUNK);
+      const chunk    = await file.slice(i * FILE_CHUNK, sliceEnd).arrayBuffer();
+      const encChunk = await encryptBin(chunk);
+      const out = new Uint8Array(8 + 4 + encChunk.byteLength);
+      out.set(idBytes, 0);
+      // Big-endian uint32 chunkIndex
+      const dv = new DataView(out.buffer);
+      dv.setUint32(8, i, false);
+      out.set(new Uint8Array(encChunk), 12);
+      // Back-pressure
+      while (dc.bufferedAmount > BUF_HIGH) {
+        await new Promise(r => {
+          const onLow = () => { dc.removeEventListener('bufferedamountlow', onLow); r(); };
+          dc.addEventListener('bufferedamountlow', onLow);
+          setTimeout(() => { dc.removeEventListener('bufferedamountlow', onLow); r(); }, 200);
+        });
+      }
+      dc.send(out.buffer);
+      if (fill) fill.style.width = Math.round(((i+1)/total)*100) + '%';
+      if (meta) meta.textContent = `送信中… ${Math.round(((i+1)/total)*100)}%`;
+    }
+    sendCtrl({type:'file-done', id:fileId});
+    if (fill) fill.parentElement.style.display = 'none';
+    if (meta) meta.textContent = humanSize(file.size);
+  } catch (e) {
+    addSystem('❌ ファイル送信失敗: ' + e.message, 'err');
+  }
+}
+
+// ── UI: MESSAGE RENDERING ───────────────────────────────────
+function addMessage(text, who){
+  const w = el('div', `msg ${who}`);
+  const b = el('div', 'msg-bubble');
+  // Linkify URLs safely (textContent only, then transform)
+  b.appendChild(linkify(text));
+  const m = el('div', 'msg-meta');
+  const t = document.createTextNode(now());
+  m.appendChild(t);
+  // Copy button
+  const cp = el('button', 'copy-btn');
+  cp.type = 'button'; cp.textContent = '📋';
+  cp.title = 'メッセージをコピー';
+  cp.addEventListener('click', () => navigator.clipboard?.writeText(text));
+  m.appendChild(cp);
+  w.append(b, m);
+  $('messages').appendChild(w);
+  scrollEnd();
+}
+
+function linkify(text){
+  // Build a fragment with <a> for http(s) links, otherwise textNode
+  const frag = document.createDocumentFragment();
+  const re = /(https?:\/\/[^\s<>"]+)/g;
+  let last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+    const a = document.createElement('a');
+    a.href = m[1]; a.textContent = m[1];
+    a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.style.color = 'inherit'; a.style.textDecoration = 'underline';
+    frag.appendChild(a);
+    last = m.index + m[1].length;
+  }
+  if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+  return frag;
+}
+
+function addReceivingFileBubble(name, size){
+  const w = el('div', 'msg them');
+  const fd = el('div', 'msg-file');
+  const ic = el('span', 'fi'); ic.textContent = '📥';
+  const info = el('div'); info.style.flex = '1';
+  const t = el('div'); t.textContent = sanitizeFileName(name);
+  const me = el('div', 'fmeta'); me.textContent = `受信中… 0%`;
+  const pr = el('div', 'msg-progress');
+  const fill = el('div', 'msg-progress-fill');
+  pr.appendChild(fill);
+  info.append(t, me, pr);
+  fd.append(ic, info);
+  const m = el('div', 'msg-meta'); m.textContent = now();
+  w.append(fd, m);
+  $('messages').appendChild(w);
+  scrollEnd();
+  return fd;
+}
+
+function addFileMessage(name, mime, url, who, sizeBytes){
+  const w = el('div', `msg ${who}`);
+  const effectiveMime = mime || guessMime(name);
+  const safeName = sanitizeFileName(name);
+
+  if (effectiveMime.startsWith('image/')) {
+    const img = el('img', 'msg-img');
+    img.src = url; img.alt = safeName;
+    img.addEventListener('click', () => openLightbox(url));
+    img.addEventListener('error', () => { img.replaceWith(makeFileBubble(safeName, effectiveMime, url, sizeBytes)); });
+    w.appendChild(img);
+  } else if (effectiveMime.startsWith('video/')) {
+    const v = document.createElement('video');
+    v.src = url; v.controls = true; v.style.maxWidth = '260px'; v.style.borderRadius = '10px';
+    w.appendChild(v);
+    w.appendChild(makeFileBubble(safeName, effectiveMime, url, sizeBytes));
+  } else if (effectiveMime.startsWith('audio/')) {
+    const a = document.createElement('audio');
+    a.src = url; a.controls = true; a.style.maxWidth = '260px';
+    w.appendChild(a);
+    w.appendChild(makeFileBubble(safeName, effectiveMime, url, sizeBytes));
+  } else {
+    w.appendChild(makeFileBubble(safeName, effectiveMime, url, sizeBytes));
+  }
+  const m = el('div', 'msg-meta'); m.textContent = now();
+  w.appendChild(m);
+  $('messages').appendChild(w);
+  scrollEnd();
+  return w;
+}
+
+function makeFileBubble(name, mime, url, sizeBytes){
+  const fd = el('div', 'msg-file');
+  const ic = el('span', 'fi'); ic.textContent = fileIcon(mime);
+  const info = el('div'); info.style.flex = '1';
+  const a = document.createElement('a');
+  a.href = url; a.download = name; a.textContent = name;
+  a.rel = 'noopener'; a.target = '_blank';
+  info.appendChild(a);
+  if (sizeBytes != null) {
+    const me = el('div','fmeta'); me.textContent = humanSize(sizeBytes);
+    info.appendChild(me);
+  }
+  const pr = el('div', 'msg-progress'); pr.style.display = 'none';
+  const fill = el('div', 'msg-progress-fill');
+  pr.appendChild(fill); info.appendChild(pr);
+  fd.append(ic, info);
+  return fd;
+}
+
+function sanitizeFileName(name){
+  // Strip path & control chars, limit length
+  let s = String(name).replace(/[\x00-\x1f<>:"/\\|?*]/g, '_').slice(0, 200);
+  if (!s) s = 'file';
+  return s;
+}
+
+function guessMime(name){
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  const map = {png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',webp:'image/webp',
+    svg:'image/svg+xml',mp4:'video/mp4',webm:'video/webm',mov:'video/quicktime',
+    mp3:'audio/mpeg',ogg:'audio/ogg',wav:'audio/wav',m4a:'audio/mp4',
+    pdf:'application/pdf',txt:'text/plain',json:'application/json',
+    zip:'application/zip',rar:'application/vnd.rar','7z':'application/x-7z-compressed'};
+  return map[ext] || 'application/octet-stream';
+}
+function fileIcon(mime){
+  if (!mime) return '📁';
+  if (mime.startsWith('image/')) return '🖼️';
+  if (mime.startsWith('video/')) return '🎬';
+  if (mime.startsWith('audio/')) return '🎵';
+  if (mime.includes('pdf'))      return '📄';
+  if (mime.includes('zip') || mime.includes('rar') || mime.includes('7z') || mime.includes('tar')) return '🗜️';
+  if (mime.includes('text'))     return '📝';
+  return '📁';
+}
+function humanSize(b){
+  if (b<1024) return b+' B';
+  if (b<1024*1024) return (b/1024).toFixed(1)+' KB';
+  if (b<1024*1024*1024) return (b/1024/1024).toFixed(1)+' MB';
+  return (b/1024/1024/1024).toFixed(2)+' GB';
+}
+
+function addSystem(text, kind){
+  const e = el('div', 'msg-system' + (kind ? ' '+kind : ''));
+  e.textContent = text;
+  $('messages').appendChild(e);
+  scrollEnd();
+}
+
+function scrollEnd(){
+  const m = $('messages');
+  if (autoScroll) m.scrollTop = m.scrollHeight;
+  else $('scrollJump').classList.add('show');
+}
+
+function updateStatus(state){
+  $('statusText').textContent = state;
+  $('statusPill').className = `status-pill${state==='connected'?' connected':''}`;
+}
+
+async function copyText(id){
+  const ta = $(id);
+  if (!ta.value) return;
+  let ok = false;
+  try { await navigator.clipboard.writeText(ta.value); ok = true; }
+  catch { try { ta.select(); document.execCommand('copy'); ok = true; } catch {} }
+  ta.parentElement.querySelectorAll('.btn').forEach(b => {
+    if (b.textContent.includes('コピー')) {
+      const orig = b.textContent;
+      b.textContent = ok ? '✅ コピー済み (60秒で自動消去)' : '❌ コピー失敗';
+      setTimeout(() => { b.textContent = orig; }, 2000);
+    }
+  });
+  // Auto-clear clipboard after 60s for safety (best-effort)
+  if (ok) {
+    setTimeout(() => { navigator.clipboard?.writeText('').catch(()=>{}); }, 60_000);
+  }
+}
+
+// ── SAS UI ──────────────────────────────────────────────────
+async function showSASModal(){
+  const sas = await computeSAS();
+  if (!sas) { alert('セッション情報がありません'); return; }
+  $('sasHex').textContent = sas.hex;
+  $('sasWords').textContent = sas.words.join(' · ');
+  $('sasModal').classList.add('open');
+}
+function closeSAS(){ $('sasModal').classList.remove('open'); }
+function sasVerify(){
+  sasVerified = true;
+  $('encBadge').classList.add('verified');
+  $('encBadge').textContent = '🛡️ 検証済 E2E';
+  addSystem('✅ セーフティ番号一致を確認 — MITM 排除');
+  closeSAS();
+}
+function sasReject(){
+  closeSAS();
+  addSystem('🚨 セーフティ番号不一致 — 中間者攻撃の可能性。切断します', 'err');
+  setTimeout(() => fullReset(true), 800);
+}
+
+// ── LOCK SCREEN ─────────────────────────────────────────────
+function lockScreen(){ locked = true; $('lockOv').classList.add('open'); }
+function unlockScreen(){ locked = false; $('lockOv').classList.remove('open'); }
+
+// Auto-lock on visibility loss after 60s
+let visTimer = null;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && pc && pc.connectionState === 'connected') {
+    visTimer = setTimeout(() => { if (document.hidden) lockScreen(); }, 60_000);
+  } else {
+    if (visTimer) { clearTimeout(visTimer); visTimer = null; }
+  }
+});
+
+// ── RESET / DESTROY ─────────────────────────────────────────
+function fullReset(notify){
+  try {
+    if (notify && dc && dc.readyState === 'open') sendCtrl({type:'bye'});
+  } catch {}
+  try { dc && dc.close(); } catch {}
+  try { pc && pc.close(); } catch {}
+  dc = null; pc = null; cryptoKey = null;
+  ecdhKeyPair = null; ecdhPubB64 = null; theirPubB64 = null;
+  sessionId = null; sasVerified = false; connectedAt = 0;
+  sendSeq = 0; lastRecvSeq = -1;
+  msgQueue.length = 0; msgProcessing = false;
+  for (const k of Object.keys(incomingFiles)) delete incomingFiles[k];
+
+  // Wipe DOM
+  $('messages').innerHTML = '<div class="msg-system">セッション終了 — 新しい接続を開始してください</div>';
+  $('offerSection').style.display = 'none';
+  $('answerSection').style.display = 'none';
+  $('answerOutputStep').style.display = 'none';
+  $('postConnectSection').style.display = 'none';
+  $('offerSDP').value = ''; $('offerInput').value = '';
+  $('answerSDP').value = ''; $('answerInput').value = '';
+  $('msgInput').value = ''; $('msgInput').disabled = true;
+  $('sendBtn').disabled = true; $('fileBtn').disabled = true;
+  $('encBadge').className = 'enc-badge'; $('encBadge').textContent = '🔓 未接続';
+  updateStatus('disconnected');
+  enableRoleButtons();
+  revokeAllURLs();
+  // Clear clipboard best-effort
+  try { navigator.clipboard?.writeText('').catch(()=>{}); } catch {}
+}
+
+// ── INPUT / EVENT WIRING ────────────────────────────────────
+function autoResize(t){
+  t.style.height = '38px';
+  t.style.height = Math.min(t.scrollHeight, 110) + 'px';
+}
+
+function handleKey(e){
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+function toggleSidebar(){
+  sidebarVisible = !sidebarVisible;
+  $('sidebar').classList.toggle('hidden', !sidebarVisible);
+}
+
+function openLightbox(url){
+  $('lightboxImg').src = url;
+  $('lightbox').classList.add('open');
+}
+function closeLightbox(){
+  $('lightbox').classList.remove('open');
+  $('lightboxImg').src = '';
+}
+
+// Track scroll position for autoScroll behavior
+$('messages').addEventListener('scroll', () => {
+  const m = $('messages');
+  const atBottom = m.scrollHeight - m.scrollTop - m.clientHeight < 40;
+  autoScroll = atBottom;
+  if (atBottom) $('scrollJump').classList.remove('show');
+});
+
+// Wire all buttons
+$('btnOffer').addEventListener('click', startOffer);
+$('btnAnswer').addEventListener('click', showAnswerUI);
+$('processOfferBtn').addEventListener('click', processOffer);
+$('applyAnswerBtn').addEventListener('click', applyAnswer);
+$('sendBtn').addEventListener('click', sendMessage);
+$('fileBtn').addEventListener('click', () => $('fileInput').click());
+$('fileInput').addEventListener('change', e => sendFile(e.target));
+$('sidebarToggle').addEventListener('click', toggleSidebar);
+$('msgInput').addEventListener('keydown', handleKey);
+$('msgInput').addEventListener('input', e => {
+  autoResize(e.target);
+  $('sendBtn').disabled = !e.target.value.trim() || !dc || dc.readyState !== 'open';
+});
+$('lightbox').addEventListener('click', closeLightbox);
+$('scrollJump').addEventListener('click', () => {
+  const m = $('messages'); m.scrollTop = m.scrollHeight; autoScroll = true;
+  $('scrollJump').classList.remove('show');
+});
+
+// SDP textarea live validation
+['offerInput','answerInput'].forEach(id => {
+  $(id).addEventListener('input', () => {
+    const ta = $(id), v = ta.value.trim();
+    if (!v) { ta.classList.remove('valid','invalid'); return; }
+    try { parseSdpPayload(v); ta.classList.add('valid'); ta.classList.remove('invalid'); }
+    catch { ta.classList.add('invalid'); ta.classList.remove('valid'); }
+  });
+});
+
+// Action buttons (copy / qr / scan) via delegation
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const act = b.dataset.act, target = b.dataset.target, title = b.dataset.title;
+  if (act === 'copy') copyText(target);
+  else if (act === 'qr') showQR(target, title || 'QR');
+  else if (act === 'scan') openScanner(target);
+});
+
+// Modal closes
+$('qrCloseBtn').addEventListener('click', closeQRModal);
+$('scanCloseBtn').addEventListener('click', closeScanner);
+$('sasCloseBtn').addEventListener('click', closeSAS);
+$('qrPrevBtn').addEventListener('click', () => qrNav(-1));
+$('qrNextBtn').addEventListener('click', () => qrNav(1));
+$('qrAutoChk').addEventListener('change', e => { if (e.target.checked) startQrAuto(); else stopQrAuto(); });
+
+// SAS / lock / reset
+$('encBadge').addEventListener('click', () => { if (cryptoKey) showSASModal(); });
+$('showSasBtn').addEventListener('click', showSASModal);
+$('sasVerifyBtn').addEventListener('click', sasVerify);
+$('sasRejectBtn').addEventListener('click', sasReject);
+$('lockBtn').addEventListener('click', lockScreen);
+$('unlockBtn').addEventListener('click', unlockScreen);
+$('resetBtn').addEventListener('click', () => {
+  if (confirm('接続を切断し、全ての履歴をメモリから消去します。よろしいですか？')) fullReset(true);
+});
+
+// ESC closes top-most modal / lightbox
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if ($('lightbox').classList.contains('open')) return closeLightbox();
+  if ($('sasModal').classList.contains('open')) return closeSAS();
+  if ($('scanModal').classList.contains('open')) return closeScanner();
+  if ($('qrModal').classList.contains('open'))   return closeQRModal();
+});
+
+// Click-outside to close modals
+['qrModal','scanModal','sasModal'].forEach(id => {
+  $(id).addEventListener('click', e => {
+    if (e.target === e.currentTarget) {
+      if (id === 'qrModal')   closeQRModal();
+      if (id === 'scanModal') closeScanner();
+      if (id === 'sasModal')  closeSAS();
+    }
+  });
+});
+
+// Sidebar default on mobile
+if (window.innerWidth <= 640) {
+  sidebarVisible = false;
+  $('sidebar').classList.add('hidden');
+}
+
+// Warn before leaving while connected
+window.addEventListener('beforeunload', e => {
+  if (dc && dc.readyState === 'open') {
+    try { sendCtrl({type:'bye'}); } catch {}
+    e.preventDefault(); e.returnValue = '';
+  }
+});
+
+// Final cleanup on unload
+window.addEventListener('pagehide', () => {
+  try { dc && dc.close(); } catch {}
+  try { pc && pc.close(); } catch {}
+  revokeAllURLs();
+});
+
+// Enable send button when input has content & dc open
+setInterval(() => {
+  const has = $('msgInput').value.trim().length > 0;
+  const open = dc && dc.readyState === 'open';
+  $('sendBtn').disabled = !(has && open);
+}, 500);
+
+</script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4edd5f8ec12a48cfa682ab8261b80a79","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
