@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>P2P Chat — 概要</title>
+<style>
+body{margin:0;padding:24px;font-family:system-ui, sans-serif;background:#0b0b12;color:#e8e8f0;line-height:1.6}
+main{max-width:760px;margin:0 auto}
+h1,h2{font-family:'Segoe UI',sans-serif}
+a{color:#7c6aff;text-decoration:none;border-bottom:1px solid rgba(124,106,255,.4)}
+a:hover{text-decoration:underline}
+section{margin-bottom:24px}
+code{background:rgba(255,255,255,.06);padding:2px 6px;border-radius:4px;font-size:0.95em}
+ul{padding-left:1.2rem}
+</style>
+</head>
+<body>
+<main>
+<h1>P2P Chat — 概要</h1>
+<p>このサービスは、ブラウザだけで動作する完全なピアツーピア暗号化チャットです。サーバーにメッセージやファイルを残さず、WebRTC経由で直接接続し、AES-GCM によるエンドツーエンド暗号化を提供します。</p>
+<section>
+<h2>特徴</h2>
+<ul>
+<li>サーバーレスな P2P 通信：SDP の交換だけを手動で行い、メッセージ・ファイルは直接相手と通信します。</li>
+<li>エンドツーエンド暗号化：チャネル内のデータは AES-GCM で暗号化され、WebRTC データチャネル上で送受信されます。</li>
+<li>MITM 対策：SAS (Short Authentication String) の検証により、接続先が正しい相手かを確認できます。</li>
+<li>ファイル送信対応：大きなファイルはチャンク化して送信し、受信側で正しい順序に再構築されます。</li>
+<li>安全設計：接続情報はセッション内だけで扱われ、ローカルストレージには保存されません。</li>
+<li>画面ロック：一定時間後または手動で画面をロックし、操作を保護できます。</li>
+</ul>
+</section>
+<section>
+<h2>使い方</h2>
+<ul>
+<li>「発信者 (Offer)」または「受信者 (Answer)」を選択します。</li>
+<li>SDP をコピーして相手と交換するか、QR コードスキャン機能を利用します。</li>
+<li>接続が確立したら、チャット入力欄からメッセージを送信できます。</li>
+<li>ファイル送信ボタンでファイルを選ぶと、暗号化されたファイル転送が開始されます。</li>
+<li>接続後は SAS を確認し、相手と一致するキーワードを承認してください。</li>
+</ul>
+</section>
+<section>
+<h2>安全性について</h2>
+<p>このアプリは以下を重視しています。</p>
+<ul>
+<li>通信内容を他者が復号できないように、各セッションごとに暗号鍵を導出します。</li>
+<li>SDP 情報は一度きりのセッション内でのみ利用され、恒久的な保存は行いません。</li>
+<li>外部接続は STUN サーバーのみに限定し、データ送信先としてのサーバーは使いません。</li>
+</ul>
+</section>
+<p><a href="index.html">← チャット画面に戻る</a></p>
+</main>
+</body>
+</html>
